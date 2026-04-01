@@ -57,14 +57,35 @@ build_zip() {
 
 OPENCLAW_SRC="$SRC_ROOT/node_modules/openclaw"
 require_path "$OPENCLAW_SRC"
-require_path "$SRC_ROOT/resources/runtime/node-darwin-x64"
+
+runtime_has_files() {
+  local dir="$1"
+  [ -d "$dir" ] && [ -n "$(find "$dir" -mindepth 1 -print -quit 2>/dev/null)" ]
+}
 
 RESULTS=()
-RESULTS+=("$(build_zip darwin-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-darwin-x64")")
 
-# arm64 currently reuses available source tree contractually; replace with real arm64 runtime when available
-if [ -d "$SRC_ROOT/resources/runtime/node-darwin-arm64" ] && [ -n "$(find "$SRC_ROOT/resources/runtime/node-darwin-arm64" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+if runtime_has_files "$SRC_ROOT/resources/runtime/node-darwin-x64"; then
+  RESULTS+=("$(build_zip darwin-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-darwin-x64")")
+fi
+
+if runtime_has_files "$SRC_ROOT/resources/runtime/node-darwin-arm64"; then
   RESULTS+=("$(build_zip darwin-arm64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-darwin-arm64")")
+fi
+
+if runtime_has_files "$SRC_ROOT/resources/runtime/node-win32-x64"; then
+  RESULTS+=("$(build_zip win-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-win32-x64")")
+elif runtime_has_files "$SRC_ROOT/resources/runtime/node-win-x64"; then
+  RESULTS+=("$(build_zip win-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-win-x64")")
+fi
+
+if runtime_has_files "$SRC_ROOT/resources/runtime/node-linux-x64"; then
+  RESULTS+=("$(build_zip linux-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-linux-x64")")
+fi
+
+if [ ${#RESULTS[@]} -eq 0 ]; then
+  echo "No runtime payloads found under $SRC_ROOT/resources/runtime" >&2
+  exit 1
 fi
 
 python3 - <<'PY' "$MANIFEST_PATH" "$VERSION" "$BUNDLE_REPO_URL" "$RELEASE_TAG" "${RESULTS[@]}"
