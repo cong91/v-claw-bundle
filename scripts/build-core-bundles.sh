@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -lt 1 ]; then
-  echo "Usage: $0 <version> [uclaw-vclaw-app-path]" >&2
+if [ $# -lt 2 ]; then
+  echo "Usage: $0 <version> <uclaw-vclaw-app-path>" >&2
+  echo "Example: ./build-core-bundles.sh 1.0.0 ../V-Claw/v-claw-app" >&2
   exit 1
 fi
 
 VERSION="$1"
-SRC_ROOT="${2:-/Users/mrcagents/Work/projects/u-claw/v-claw-app}"
+SRC_ROOT="$2"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/dist/$VERSION"
 MANIFEST_PATH="$DIST_DIR/v-claw-core-manifest.json"
@@ -32,6 +33,37 @@ sha256_of() {
   fi
 }
 
+python_bin() {
+  if command -v python3 >/dev/null 2>&1; then
+    echo python3
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    echo python
+    return 0
+  fi
+  return 1
+}
+
+zip_dir() {
+  local src_dir="$1"
+  local out_zip="$2"
+  if command -v zip >/dev/null 2>&1; then
+    (cd "$src_dir" && zip -qr "$out_zip" .)
+    return 0
+  fi
+
+  if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
+    local psbin
+    psbin="$(command -v powershell || command -v pwsh)"
+    "$psbin" -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '$src_dir/*' -DestinationPath '$out_zip' -Force"
+    return 0
+  fi
+
+  echo "Neither zip nor PowerShell Compress-Archive is available" >&2
+  return 1
+}
+
 build_zip() {
   local platform_key="$1"
   local core_src="$2"
@@ -42,10 +74,10 @@ build_zip() {
   stage_root="$(mktemp -d)"
   mkdir -p "$stage_root/core" "$stage_root/runtime"
   cp -R "$core_src" "$stage_root/core/openclaw"
-  (cd "$stage_root/core" && zip -qr "$core_zip" .)
+  (cd "$stage_root/core" && zip_dir "$PWD" "$core_zip")
   rm -rf "$stage_root/runtime" && mkdir -p "$stage_root/runtime"
   cp -R "$runtime_src" "$stage_root/runtime/runtime"
-  (cd "$stage_root/runtime" && zip -qr "$runtime_zip" .)
+  (cd "$stage_root/runtime" && zip_dir "$PWD" "$runtime_zip")
   rm -rf "$stage_root"
   local core_sha runtime_sha core_size runtime_size
   core_sha="$(sha256_of "$core_zip")"
@@ -88,7 +120,13 @@ if [ ${#RESULTS[@]} -eq 0 ]; then
   exit 1
 fi
 
-python3 - <<'PY' "$MANIFEST_PATH" "$VERSION" "$BUNDLE_REPO_URL" "$RELEASE_TAG" "${RESULTS[@]}"
+PYTHON_BIN="$(python_bin || true)"
+if [ -z "$PYTHON_BIN" ]; then
+  echo "python/python3 is required to generate manifest" >&2
+  exit 1
+fi
+
+"$PYTHON_BIN" - <<'PY' "$MANIFEST_PATH" "$VERSION" "$BUNDLE_REPO_URL" "$RELEASE_TAG" "${RESULTS[@]}"
 import json, os, sys
 manifest_path, version, repo_url, release_tag, *results = sys.argv[1:]
 artifacts = {}
