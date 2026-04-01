@@ -66,14 +66,18 @@ zip_dir() {
 
 build_zip() {
   local platform_key="$1"
-  local core_src="$2"
+  local core_node_modules_src="$2"
   local runtime_src="$3"
   local core_zip="$DIST_DIR/v-claw-core-bundle-${VERSION}-${platform_key}.zip"
   local runtime_zip="$DIST_DIR/v-claw-runtime-bundle-${VERSION}-${platform_key}.zip"
   local stage_root
   stage_root="$(mktemp -d)"
   mkdir -p "$stage_root/core" "$stage_root/runtime"
-  cp -R "$core_src" "$stage_root/core/openclaw"
+  cp "$CORE_PACKAGE_JSON_SRC" "$stage_root/core/package.json"
+  if [ -f "$CORE_PACKAGE_LOCK_SRC" ]; then
+    cp "$CORE_PACKAGE_LOCK_SRC" "$stage_root/core/package-lock.json"
+  fi
+  cp -R "$core_node_modules_src" "$stage_root/core/node_modules"
   (cd "$stage_root/core" && zip_dir "$PWD" "$core_zip")
   rm -rf "$stage_root/runtime" && mkdir -p "$stage_root/runtime"
   cp -R "$runtime_src" "$stage_root/runtime/runtime"
@@ -87,8 +91,11 @@ build_zip() {
   printf '%s|%s|%s|%s|%s|%s\n' "$platform_key" "$core_zip" "$core_sha" "$core_size" "$runtime_zip" "$runtime_sha|$runtime_size"
 }
 
-OPENCLAW_SRC="$SRC_ROOT/node_modules/openclaw"
-require_path "$OPENCLAW_SRC"
+CORE_NODE_MODULES_SRC="$SRC_ROOT/node_modules"
+CORE_PACKAGE_JSON_SRC="$SRC_ROOT/package.json"
+CORE_PACKAGE_LOCK_SRC="$SRC_ROOT/package-lock.json"
+require_path "$CORE_NODE_MODULES_SRC"
+require_path "$CORE_PACKAGE_JSON_SRC"
 
 runtime_has_files() {
   local dir="$1"
@@ -98,21 +105,21 @@ runtime_has_files() {
 RESULTS=()
 
 if runtime_has_files "$SRC_ROOT/resources/runtime/node-darwin-x64"; then
-  RESULTS+=("$(build_zip darwin-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-darwin-x64")")
+  RESULTS+=("$(build_zip darwin-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-darwin-x64")")
 fi
 
 if runtime_has_files "$SRC_ROOT/resources/runtime/node-darwin-arm64"; then
-  RESULTS+=("$(build_zip darwin-arm64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-darwin-arm64")")
+  RESULTS+=("$(build_zip darwin-arm64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-darwin-arm64")")
 fi
 
 if runtime_has_files "$SRC_ROOT/resources/runtime/node-win32-x64"; then
-  RESULTS+=("$(build_zip win-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-win32-x64")")
+  RESULTS+=("$(build_zip win-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-win32-x64")")
 elif runtime_has_files "$SRC_ROOT/resources/runtime/node-win-x64"; then
-  RESULTS+=("$(build_zip win-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-win-x64")")
+  RESULTS+=("$(build_zip win-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-win-x64")")
 fi
 
 if runtime_has_files "$SRC_ROOT/resources/runtime/node-linux-x64"; then
-  RESULTS+=("$(build_zip linux-x64 "$OPENCLAW_SRC" "$SRC_ROOT/resources/runtime/node-linux-x64")")
+  RESULTS+=("$(build_zip linux-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-linux-x64")")
 fi
 
 if [ ${#RESULTS[@]} -eq 0 ]; then

@@ -25,9 +25,14 @@ $SourceRoot = (Resolve-Path $Source).Path
 
 New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 
-$OpenClawSrc = Join-Path $SourceRoot "node_modules/openclaw"
-if (-not (Test-Path $OpenClawSrc)) {
-  Fail "Missing required source path: $OpenClawSrc"
+$CoreNodeModulesSrc = Join-Path $SourceRoot "node_modules"
+$CorePackageJsonSrc = Join-Path $SourceRoot "package.json"
+$CorePackageLockSrc = Join-Path $SourceRoot "package-lock.json"
+if (-not (Test-Path $CoreNodeModulesSrc)) {
+  Fail "Missing required source path: $CoreNodeModulesSrc"
+}
+if (-not (Test-Path $CorePackageJsonSrc)) {
+  Fail "Missing required source path: $CorePackageJsonSrc"
 }
 
 function Test-DirHasFiles($dir) {
@@ -43,7 +48,7 @@ function Get-Sha256($file) {
   return ((Get-FileHash -Path $file -Algorithm SHA256).Hash).ToLower()
 }
 
-function Build-Zip($platformKey, $coreSrc, $runtimeSrc) {
+function Build-Zip($platformKey, $coreNodeModulesSrc, $runtimeSrc) {
   $coreZip = Join-Path $DistDir ("v-claw-core-bundle-$Version-$platformKey.zip")
   $runtimeZip = Join-Path $DistDir ("v-claw-runtime-bundle-$Version-$platformKey.zip")
 
@@ -53,7 +58,11 @@ function Build-Zip($platformKey, $coreSrc, $runtimeSrc) {
   New-Item -ItemType Directory -Force -Path $coreStage | Out-Null
   New-Item -ItemType Directory -Force -Path $runtimeStage | Out-Null
 
-  Copy-Item -Recurse -Force $coreSrc (Join-Path $coreStage 'openclaw')
+  Copy-Item -Force $CorePackageJsonSrc (Join-Path $coreStage 'package.json')
+  if (Test-Path $CorePackageLockSrc) {
+    Copy-Item -Force $CorePackageLockSrc (Join-Path $coreStage 'package-lock.json')
+  }
+  Copy-Item -Recurse -Force $coreNodeModulesSrc (Join-Path $coreStage 'node_modules')
   New-ZipFromDir $coreStage $coreZip
 
   Copy-Item -Recurse -Force $runtimeSrc (Join-Path $runtimeStage 'runtime')
@@ -86,25 +95,25 @@ if (-not (Test-DirHasFiles $winRuntime)) {
   $winRuntime = Join-Path $SourceRoot 'resources/runtime/node-win-x64'
 }
 if (Test-DirHasFiles $winRuntime) {
-  $built = Build-Zip 'win-x64' $OpenClawSrc $winRuntime
+  $built = Build-Zip 'win-x64' $CoreNodeModulesSrc $winRuntime
   $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
 }
 
 $darwinX64 = Join-Path $SourceRoot 'resources/runtime/node-darwin-x64'
 if (Test-DirHasFiles $darwinX64) {
-  $built = Build-Zip 'darwin-x64' $OpenClawSrc $darwinX64
+  $built = Build-Zip 'darwin-x64' $CoreNodeModulesSrc $darwinX64
   $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
 }
 
 $darwinArm64 = Join-Path $SourceRoot 'resources/runtime/node-darwin-arm64'
 if (Test-DirHasFiles $darwinArm64) {
-  $built = Build-Zip 'darwin-arm64' $OpenClawSrc $darwinArm64
+  $built = Build-Zip 'darwin-arm64' $CoreNodeModulesSrc $darwinArm64
   $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
 }
 
 $linuxX64 = Join-Path $SourceRoot 'resources/runtime/node-linux-x64'
 if (Test-DirHasFiles $linuxX64) {
-  $built = Build-Zip 'linux-x64' $OpenClawSrc $linuxX64
+  $built = Build-Zip 'linux-x64' $CoreNodeModulesSrc $linuxX64
   $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
 }
 
