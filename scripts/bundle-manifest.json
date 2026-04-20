@@ -1,0 +1,23 @@
+{
+  "bundleName": "v-claw-bundle",
+  "bundleVersion": "1.0.0",
+  "assetName": "v-claw-bundle.zip",
+  "checksumName": "v-claw-bundle.zip.sha256",
+  "manifestName": "v-claw-core-manifest.json",
+  "releaseTag": "v1.0.0",
+  "platform": "win-x64",
+  "dependencies": {
+    "openclaw": "2026.4.15",
+    "@openclaw/zalo": "2026.3.13"
+  },
+  "requiredPaths": [
+    "package.json",
+    "node_modules/openclaw/openclaw.mjs",
+    "node_modules/@openclaw/zalo/package.json"
+  ],
+  "stagePackage": {
+    "name": "v-claw-bundle",
+    "private": true,
+    "description": "Release-grade V-Claw runtime bundle"
+  }
+}

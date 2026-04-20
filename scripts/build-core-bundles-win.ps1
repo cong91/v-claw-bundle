@@ -1,133 +1,278 @@
 param(
-  [Parameter(Mandatory=$true)]
-  [string]$Version,
-
-  [Parameter(Mandatory=$true)]
-  [string]$Source
+    [string]$ManifestPath,
+    [string]$OutputDir,
+    [switch]$Clean
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Write-Info($msg) { Write-Host $msg -ForegroundColor Cyan }
-function Write-Ok($msg) { Write-Host $msg -ForegroundColor Green }
-function Fail($msg) {
-  Write-Host $msg -ForegroundColor Red
-  exit 1
+function Write-Info {
+    param([string]$Message)
+    Write-Host "[INFO] $Message" -ForegroundColor Cyan
 }
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$DistDir = Join-Path $RepoRoot ("dist/" + $Version)
-$ManifestPath = Join-Path $DistDir "v-claw-core-manifest.json"
-$BundleRepoUrl = "https://github.com/cong91/v-claw-bundle"
-$ReleaseTag = "v$Version"
-$SourceRoot = (Resolve-Path $Source).Path
-
-New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
-
-$CoreNodeModulesSrc = Join-Path $SourceRoot "node_modules"
-$CorePackageJsonSrc = Join-Path $SourceRoot "package.json"
-$CorePackageLockSrc = Join-Path $SourceRoot "package-lock.json"
-if (-not (Test-Path $CoreNodeModulesSrc)) {
-  Fail "Missing required source path: $CoreNodeModulesSrc"
-}
-if (-not (Test-Path $CorePackageJsonSrc)) {
-  Fail "Missing required source path: $CorePackageJsonSrc"
+function Write-Ok {
+    param([string]$Message)
+    Write-Host "[OK] $Message" -ForegroundColor Green
 }
 
-function Test-DirHasFiles($dir) {
-  return (Test-Path $dir) -and (Get-ChildItem -Force $dir | Select-Object -First 1)
+function Fail {
+    param([string]$Message)
+    throw $Message
 }
 
-function New-ZipFromDir($srcDir, $outZip) {
-  if (Test-Path $outZip) { Remove-Item -Force $outZip }
-  Compress-Archive -Path (Join-Path $srcDir '*') -DestinationPath $outZip -Force
+function Get-NormalizedRelativePath {
+    param([string]$RelativePath)
+
+    return ($RelativePath -replace '/', '\\')
 }
 
-function Get-Sha256($file) {
-  return ((Get-FileHash -Path $file -Algorithm SHA256).Hash).ToLower()
+function Get-StagePath {
+    param(
+        [string]$Root,
+        [string]$RelativePath
+    )
+
+    $normalizedRelativePath = Get-NormalizedRelativePath -RelativePath $RelativePath
+    return (Join-Path $Root $normalizedRelativePath)
 }
 
-function Build-Zip($platformKey, $coreNodeModulesSrc, $runtimeSrc) {
-  $coreZip = Join-Path $DistDir ("v-claw-core-bundle-$Version-$platformKey.zip")
-  $runtimeZip = Join-Path $DistDir ("v-claw-runtime-bundle-$Version-$platformKey.zip")
+function New-CleanDirectory {
+    param([string]$Path)
 
-  $stageRoot = Join-Path $env:TEMP ("vclaw-bundle-" + [guid]::NewGuid().ToString())
-  $coreStage = Join-Path $stageRoot 'core'
-  $runtimeStage = Join-Path $stageRoot 'runtime'
-  New-Item -ItemType Directory -Force -Path $coreStage | Out-Null
-  New-Item -ItemType Directory -Force -Path $runtimeStage | Out-Null
-
-  Copy-Item -Force $CorePackageJsonSrc (Join-Path $coreStage 'package.json')
-  if (Test-Path $CorePackageLockSrc) {
-    Copy-Item -Force $CorePackageLockSrc (Join-Path $coreStage 'package-lock.json')
-  }
-  Copy-Item -Recurse -Force $coreNodeModulesSrc (Join-Path $coreStage 'node_modules')
-  New-ZipFromDir $coreStage $coreZip
-
-  Copy-Item -Recurse -Force $runtimeSrc (Join-Path $runtimeStage 'runtime')
-  New-ZipFromDir $runtimeStage $runtimeZip
-
-  $result = [ordered]@{
-    platform = $platformKey
-    core = [ordered]@{
-      file = [System.IO.Path]::GetFileName($coreZip)
-      sha256 = Get-Sha256 $coreZip
-      sizeBytes = (Get-Item $coreZip).Length
-      url = "$BundleRepoUrl/releases/download/$ReleaseTag/$([System.IO.Path]::GetFileName($coreZip))"
+    if (Test-Path $Path) {
+        Remove-Item -Path $Path -Recurse -Force
     }
-    runtime = [ordered]@{
-      file = [System.IO.Path]::GetFileName($runtimeZip)
-      sha256 = Get-Sha256 $runtimeZip
-      sizeBytes = (Get-Item $runtimeZip).Length
-      url = "$BundleRepoUrl/releases/download/$ReleaseTag/$([System.IO.Path]::GetFileName($runtimeZip))"
+
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+function Get-JsonObject {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        Fail "Missing manifest file: $Path"
     }
-  }
 
-  Remove-Item -Recurse -Force $stageRoot
-  return $result
+    return (Get-Content $Path -Raw | ConvertFrom-Json)
 }
 
-$artifacts = [ordered]@{}
+function ConvertTo-OrderedMap {
+    param($InputObject)
 
-$winRuntime = Join-Path $SourceRoot 'resources/runtime/node-win32-x64'
-if (-not (Test-DirHasFiles $winRuntime)) {
-  $winRuntime = Join-Path $SourceRoot 'resources/runtime/node-win-x64'
-}
-if (Test-DirHasFiles $winRuntime) {
-  $built = Build-Zip 'win-x64' $CoreNodeModulesSrc $winRuntime
-  $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
-}
+    $map = [ordered]@{}
 
-$darwinX64 = Join-Path $SourceRoot 'resources/runtime/node-darwin-x64'
-if (Test-DirHasFiles $darwinX64) {
-  $built = Build-Zip 'darwin-x64' $CoreNodeModulesSrc $darwinX64
-  $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
+    if ($InputObject) {
+        foreach ($property in $InputObject.PSObject.Properties) {
+            $map[$property.Name] = [string]$property.Value
+        }
+    }
+
+    return $map
 }
 
-$darwinArm64 = Join-Path $SourceRoot 'resources/runtime/node-darwin-arm64'
-if (Test-DirHasFiles $darwinArm64) {
-  $built = Build-Zip 'darwin-arm64' $CoreNodeModulesSrc $darwinArm64
-  $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
+function Assert-CommandExists {
+    param([string]$Name)
+
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        Fail "Missing required command: $Name"
+    }
 }
 
-$linuxX64 = Join-Path $SourceRoot 'resources/runtime/node-linux-x64'
-if (Test-DirHasFiles $linuxX64) {
-  $built = Build-Zip 'linux-x64' $CoreNodeModulesSrc $linuxX64
-  $artifacts[$built.platform] = [ordered]@{ core = $built.core; runtime = $built.runtime }
+function Assert-PathExists {
+    param(
+        [string]$Root,
+        [string[]]$RelativePaths
+    )
+
+    $missing = @()
+
+    foreach ($relativePath in $RelativePaths) {
+        $candidate = Get-StagePath -Root $Root -RelativePath $relativePath
+        if (-not (Test-Path $candidate)) {
+            $missing += $relativePath
+        }
+    }
+
+    if ($missing.Count -gt 0) {
+        Fail ('Missing required bundle paths: ' + ($missing -join ', '))
+    }
 }
 
-if ($artifacts.Count -eq 0) {
-  Fail "No runtime payloads found under $SourceRoot/resources/runtime"
+function Assert-ForbiddenDependenciesAbsent {
+    param(
+        [string]$Root,
+        [string[]]$PackageNames
+    )
+
+    if (-not $PackageNames) {
+        return
+    }
+
+    foreach ($packageName in $PackageNames) {
+        if ([string]::IsNullOrWhiteSpace([string]$packageName)) {
+            continue
+        }
+
+        $packagePath = Get-StagePath -Root $Root -RelativePath (Join-Path 'node_modules' ([string]$packageName))
+        if (Test-Path $packagePath) {
+            Fail "Forbidden dependency detected in bundle: $packageName"
+        }
+    }
 }
 
-$manifest = [ordered]@{
-  bundleVersion = $Version
-  publishedAt = $null
-  artifacts = $artifacts
-}
-$manifest | ConvertTo-Json -Depth 8 | Set-Content -Path $ManifestPath -Encoding utf8
+function New-ChecksumFile {
+    param(
+        [string]$AssetPath,
+        [string]$ChecksumPath
+    )
 
-Write-Ok "Built core bundles under $DistDir"
-Write-Host "Manifest: $ManifestPath"
-Get-ChildItem $DistDir | Select-Object Name,Length | Format-Table -AutoSize
+    $hash = (Get-FileHash -Path $AssetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $assetFileName = Split-Path $AssetPath -Leaf
+    $checksumLine = "{0} *{1}" -f $hash, $assetFileName
+    $checksumLine | Out-File -FilePath $ChecksumPath -Encoding utf8
+    return $hash
+}
+
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptDir
+$resolvedManifestPath = if ($ManifestPath) { $ManifestPath } else { Join-Path $scriptDir 'bundle-manifest.json' }
+$resolvedOutputDir = if ($OutputDir) { $OutputDir } else { Join-Path $repoRoot 'dist' }
+
+$resolvedManifestPath = (Resolve-Path $resolvedManifestPath).Path
+$manifest = Get-JsonObject -Path $resolvedManifestPath
+
+$bundleName = [string]$manifest.bundleName
+$bundleVersion = [string]$manifest.bundleVersion
+$assetName = [string]$manifest.assetName
+$checksumName = [string]$manifest.checksumName
+$coreManifestName = [string]$manifest.manifestName
+$releaseTag = [string]$manifest.releaseTag
+$platform = [string]$manifest.platform
+$dependencies = ConvertTo-OrderedMap -InputObject $manifest.dependencies
+$forbiddenDependencies = @()
+if ($manifest.PSObject.Properties.Name -contains 'forbiddenDependencies' -and $null -ne $manifest.forbiddenDependencies) {
+    $forbiddenDependencies = @($manifest.forbiddenDependencies)
+}
+$requiredPaths = @($manifest.requiredPaths)
+$stagePackageName = [string]$manifest.stagePackage.name
+$stagePackageDescription = [string]$manifest.stagePackage.description
+$stagePackagePrivate = [bool]$manifest.stagePackage.private
+
+if ([string]::IsNullOrWhiteSpace($bundleName)) {
+    Fail 'Manifest bundleName is required'
+}
+if ([string]::IsNullOrWhiteSpace($bundleVersion)) {
+    Fail 'Manifest bundleVersion is required'
+}
+if ([string]::IsNullOrWhiteSpace($assetName)) {
+    Fail 'Manifest assetName is required'
+}
+if ([string]::IsNullOrWhiteSpace($checksumName)) {
+    Fail 'Manifest checksumName is required'
+}
+if ([string]::IsNullOrWhiteSpace($coreManifestName)) {
+    Fail 'Manifest manifestName is required'
+}
+if ([string]::IsNullOrWhiteSpace($platform)) {
+    Fail 'Manifest platform is required'
+}
+if (-not $dependencies.Count) {
+    Fail 'Manifest dependencies must not be empty'
+}
+if (-not $requiredPaths.Count) {
+    Fail 'Manifest requiredPaths must not be empty'
+}
+if ([string]::IsNullOrWhiteSpace($stagePackageName)) {
+    $stagePackageName = $bundleName
+}
+if ([string]::IsNullOrWhiteSpace($stagePackageDescription)) {
+    $stagePackageDescription = 'Release-grade V-Claw runtime bundle'
+}
+if ([string]::IsNullOrWhiteSpace($releaseTag)) {
+    $releaseTag = "v$bundleVersion"
+}
+
+Assert-CommandExists -Name 'npm'
+
+$resolvedOutputDir = [System.IO.Path]::GetFullPath($resolvedOutputDir)
+$stageDir = Join-Path $resolvedOutputDir $bundleName
+$assetPath = Join-Path $resolvedOutputDir $assetName
+$checksumPath = Join-Path $resolvedOutputDir $checksumName
+$coreManifestPath = Join-Path $resolvedOutputDir $coreManifestName
+
+if ($Clean) {
+    Write-Info "Cleaning output directory: $resolvedOutputDir"
+    New-CleanDirectory -Path $resolvedOutputDir
+}
+else {
+    New-Item -ItemType Directory -Path $resolvedOutputDir -Force | Out-Null
+    if (Test-Path $stageDir) {
+        Remove-Item -Path $stageDir -Recurse -Force
+    }
+}
+
+if (Test-Path $assetPath) {
+    Remove-Item -Path $assetPath -Force
+}
+if (Test-Path $checksumPath) {
+    Remove-Item -Path $checksumPath -Force
+}
+if (Test-Path $coreManifestPath) {
+    Remove-Item -Path $coreManifestPath -Force
+}
+
+New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
+
+$stagePackageJson = [ordered]@{
+    name         = $stagePackageName
+    version      = $bundleVersion
+    private      = $stagePackagePrivate
+    description  = $stagePackageDescription
+    dependencies = $dependencies
+}
+
+$stagePackageJsonPath = Join-Path $stageDir 'package.json'
+$stagePackageJson | ConvertTo-Json -Depth 10 | Out-File -FilePath $stagePackageJsonPath -Encoding utf8
+
+Write-Info "Installing pinned dependencies into: $stageDir"
+& npm install --prefix $stageDir --omit=dev --ignore-scripts --no-fund --no-audit
+if ($LASTEXITCODE -ne 0) {
+    Fail 'npm install failed while building v-claw-bundle'
+}
+
+Assert-ForbiddenDependenciesAbsent -Root $stageDir -PackageNames $forbiddenDependencies
+Assert-PathExists -Root $stageDir -RelativePaths $requiredPaths
+
+Write-Info "Creating canonical archive: $assetPath"
+Compress-Archive -Path (Join-Path $stageDir '*') -DestinationPath $assetPath -Force
+
+$sha256 = New-ChecksumFile -AssetPath $assetPath -ChecksumPath $checksumPath
+$assetSizeBytes = (Get-Item $assetPath).Length
+
+$coreManifest = [ordered]@{
+    manifestVersion           = 1
+    bundleName                = $bundleName
+    bundleVersion             = $bundleVersion
+    requiredCoreBundleVersion = $bundleVersion
+    releaseTag                = $releaseTag
+    platform                  = $platform
+    generatedAt               = (Get-Date).ToUniversalTime().ToString('o')
+    platforms                 = [ordered]@{
+        $platform = [ordered]@{
+            core = [ordered]@{
+                file      = $assetName
+                sha256    = $sha256
+                sizeBytes = $assetSizeBytes
+            }
+        }
+    }
+}
+
+$coreManifest | ConvertTo-Json -Depth 10 | Out-File -FilePath $coreManifestPath -Encoding utf8
+
+Write-Ok "Bundle staged at: $stageDir"
+Write-Ok "Bundle asset: $assetPath"
+Write-Ok "Checksum: $checksumPath"
+Write-Ok "Core manifest: $coreManifestPath"
