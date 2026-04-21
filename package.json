@@ -1,0 +1,11 @@
+{
+  "name": "v-claw-bundle",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Canonical producer repo for V-Claw core bundle artifacts and release manifests",
+  "license": "MIT",
+  "scripts": {
+    "build:core:win": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./scripts/build-core-bundles-win.ps1 -Clean",
+    "build:core": "npm run build:core:win"
+  }
+}

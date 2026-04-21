@@ -1,35 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -lt 2 ]; then
-  echo "Usage: $0 <version> <uclaw-vclaw-app-path>" >&2
-  echo "Example: ./build-core-bundles.sh 1.0.0 ../V-Claw/v-claw-app" >&2
-  exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+MANIFEST_PATH="${1:-$SCRIPT_DIR/bundle-manifest.json}"
+OUTPUT_DIR="${2:-$REPO_ROOT/dist}"
 
-VERSION="$1"
-SRC_ROOT="$2"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DIST_DIR="$REPO_ROOT/dist/$VERSION"
-MANIFEST_PATH="$DIST_DIR/v-claw-core-manifest.json"
-BUNDLE_REPO_URL="https://github.com/cong91/v-claw-bundle"
-RELEASE_TAG="v$VERSION"
-
-mkdir -p "$DIST_DIR"
-
-require_path() {
-  local p="$1"
-  if [ ! -e "$p" ]; then
-    echo "Missing required source path: $p" >&2
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
     exit 1
-  fi
-}
-
-sha256_of() {
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print tolower($1)}'
-  else
-    sha256sum "$1" | awk '{print tolower($1)}'
   fi
 }
 
@@ -45,126 +25,134 @@ python_bin() {
   return 1
 }
 
-zip_dir() {
-  local src_dir="$1"
-  local out_zip="$2"
-  if command -v zip >/dev/null 2>&1; then
-    (cd "$src_dir" && zip -qr "$out_zip" .)
-    return 0
-  fi
-
-  if command -v powershell >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
-    local psbin
-    psbin="$(command -v powershell || command -v pwsh)"
-    "$psbin" -NoProfile -ExecutionPolicy Bypass -Command "Compress-Archive -Path '$src_dir/*' -DestinationPath '$out_zip' -Force"
-    return 0
-  fi
-
-  echo "Neither zip nor PowerShell Compress-Archive is available" >&2
-  return 1
-}
-
-build_zip() {
-  local platform_key="$1"
-  local core_node_modules_src="$2"
-  local runtime_src="$3"
-  local core_zip="$DIST_DIR/v-claw-core-bundle-${VERSION}-${platform_key}.zip"
-  local runtime_zip="$DIST_DIR/v-claw-runtime-bundle-${VERSION}-${platform_key}.zip"
-  local stage_root
-  stage_root="$(mktemp -d)"
-  mkdir -p "$stage_root/core" "$stage_root/runtime"
-  cp "$CORE_PACKAGE_JSON_SRC" "$stage_root/core/package.json"
-  if [ -f "$CORE_PACKAGE_LOCK_SRC" ]; then
-    cp "$CORE_PACKAGE_LOCK_SRC" "$stage_root/core/package-lock.json"
-  fi
-  cp -R "$core_node_modules_src" "$stage_root/core/node_modules"
-  (cd "$stage_root/core" && zip_dir "$PWD" "$core_zip")
-  rm -rf "$stage_root/runtime" && mkdir -p "$stage_root/runtime"
-  cp -R "$runtime_src" "$stage_root/runtime/runtime"
-  (cd "$stage_root/runtime" && zip_dir "$PWD" "$runtime_zip")
-  rm -rf "$stage_root"
-  local core_sha runtime_sha core_size runtime_size
-  core_sha="$(sha256_of "$core_zip")"
-  runtime_sha="$(sha256_of "$runtime_zip")"
-  core_size="$(stat -f%z "$core_zip" 2>/dev/null || stat -c%s "$core_zip")"
-  runtime_size="$(stat -f%z "$runtime_zip" 2>/dev/null || stat -c%s "$runtime_zip")"
-  printf '%s|%s|%s|%s|%s|%s\n' "$platform_key" "$core_zip" "$core_sha" "$core_size" "$runtime_zip" "$runtime_sha|$runtime_size"
-}
-
-CORE_NODE_MODULES_SRC="$SRC_ROOT/node_modules"
-CORE_PACKAGE_JSON_SRC="$SRC_ROOT/package.json"
-CORE_PACKAGE_LOCK_SRC="$SRC_ROOT/package-lock.json"
-require_path "$CORE_NODE_MODULES_SRC"
-require_path "$CORE_PACKAGE_JSON_SRC"
-
-runtime_has_files() {
-  local dir="$1"
-  [ -d "$dir" ] && [ -n "$(find "$dir" -mindepth 1 -print -quit 2>/dev/null)" ]
-}
-
-RESULTS=()
-
-if runtime_has_files "$SRC_ROOT/resources/runtime/node-darwin-x64"; then
-  RESULTS+=("$(build_zip darwin-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-darwin-x64")")
-fi
-
-if runtime_has_files "$SRC_ROOT/resources/runtime/node-darwin-arm64"; then
-  RESULTS+=("$(build_zip darwin-arm64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-darwin-arm64")")
-fi
-
-if runtime_has_files "$SRC_ROOT/resources/runtime/node-win32-x64"; then
-  RESULTS+=("$(build_zip win-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-win32-x64")")
-elif runtime_has_files "$SRC_ROOT/resources/runtime/node-win-x64"; then
-  RESULTS+=("$(build_zip win-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-win-x64")")
-fi
-
-if runtime_has_files "$SRC_ROOT/resources/runtime/node-linux-x64"; then
-  RESULTS+=("$(build_zip linux-x64 "$CORE_NODE_MODULES_SRC" "$SRC_ROOT/resources/runtime/node-linux-x64")")
-fi
-
-if [ ${#RESULTS[@]} -eq 0 ]; then
-  echo "No runtime payloads found under $SRC_ROOT/resources/runtime" >&2
-  exit 1
-fi
-
+require_command npm
 PYTHON_BIN="$(python_bin || true)"
 if [ -z "$PYTHON_BIN" ]; then
-  echo "python/python3 is required to generate manifest" >&2
+  echo "python/python3 is required" >&2
   exit 1
 fi
 
-"$PYTHON_BIN" - <<'PY' "$MANIFEST_PATH" "$VERSION" "$BUNDLE_REPO_URL" "$RELEASE_TAG" "${RESULTS[@]}"
-import json, os, sys
-manifest_path, version, repo_url, release_tag, *results = sys.argv[1:]
-artifacts = {}
-for row in results:
-    platform_key, core_zip, core_sha, core_size, runtime_zip, tail = row.split('|', 5)
-    runtime_sha, runtime_size = tail.split('|', 1)
-    core_file = os.path.basename(core_zip)
-    runtime_file = os.path.basename(runtime_zip)
-    artifacts[platform_key] = {
-        "core": {
-            "file": core_file,
-            "sha256": core_sha,
-            "sizeBytes": int(core_size),
-            "url": f"{repo_url}/releases/download/{release_tag}/{core_file}",
-        },
-        "runtime": {
-            "file": runtime_file,
-            "sha256": runtime_sha,
-            "sizeBytes": int(runtime_size),
-            "url": f"{repo_url}/releases/download/{release_tag}/{runtime_file}",
-        },
-    }
-manifest = {
-    "bundleVersion": version,
-    "publishedAt": None,
-    "artifacts": artifacts,
+mkdir -p "$OUTPUT_DIR"
+
+"$PYTHON_BIN" - <<'PY' "$MANIFEST_PATH" "$OUTPUT_DIR"
+import json
+import os
+import shutil
+import subprocess
+import sys
+import zipfile
+from hashlib import sha256
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1]).resolve()
+output_dir = Path(sys.argv[2]).resolve()
+if not manifest_path.exists():
+    raise SystemExit(f"Missing manifest file: {manifest_path}")
+
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+bundle_name = str(manifest.get("bundleName") or "").strip()
+bundle_version = str(manifest.get("bundleVersion") or "").strip()
+platform = str(manifest.get("platform") or "").strip()
+bundle_repo = str(manifest.get("bundleRepo") or "").strip()
+manifest_name = str(manifest.get("manifestName") or "").strip()
+release_tag = str(manifest.get("releaseTag") or f"v{bundle_version}").strip()
+release_asset_url_pattern = str(manifest.get("releaseAssetUrlPattern") or "").strip()
+core_template = str(((manifest.get("artifactNaming") or {}).get("core") or "")).strip()
+dependencies = dict(manifest.get("dependencies") or {})
+required_paths = list(manifest.get("requiredPaths") or [])
+forbidden_dependencies = list(manifest.get("forbiddenDependencies") or [])
+stage_package = dict(manifest.get("stagePackage") or {})
+stage_package_name = str(stage_package.get("name") or bundle_name).strip()
+stage_package_description = str(stage_package.get("description") or "Canonical V-Claw core bundle payload").strip()
+stage_package_private = bool(stage_package.get("private", True))
+
+for label, value in {
+    "bundleName": bundle_name,
+    "bundleVersion": bundle_version,
+    "platform": platform,
+    "bundleRepo": bundle_repo,
+    "manifestName": manifest_name,
+    "releaseAssetUrlPattern": release_asset_url_pattern,
+    "artifactNaming.core": core_template,
+}.items():
+    if not value:
+        raise SystemExit(f"Manifest {label} is required")
+if not dependencies:
+    raise SystemExit("Manifest dependencies must not be empty")
+if not required_paths:
+    raise SystemExit("Manifest requiredPaths must not be empty")
+
+core_asset_name = core_template.replace("{version}", bundle_version).replace("{platform}", platform)
+checksum_name = f"{core_asset_name}.sha256"
+stage_dir = output_dir / bundle_name
+asset_path = output_dir / core_asset_name
+checksum_path = output_dir / checksum_name
+core_manifest_path = output_dir / manifest_name
+
+if stage_dir.exists():
+    shutil.rmtree(stage_dir)
+for path in (asset_path, checksum_path, core_manifest_path):
+    if path.exists():
+        path.unlink()
+
+stage_dir.mkdir(parents=True, exist_ok=True)
+stage_package_json = {
+    "name": stage_package_name,
+    "version": bundle_version,
+    "private": stage_package_private,
+    "description": stage_package_description,
+    "dependencies": dependencies,
 }
-with open(manifest_path, 'w', encoding='utf-8') as f:
-    json.dump(manifest, f, indent=2)
-print(manifest_path)
+(stage_dir / "package.json").write_text(json.dumps(stage_package_json, indent=2) + "\n", encoding="utf-8")
+
+subprocess.run(
+    ["npm", "install", "--prefix", str(stage_dir), "--omit=dev", "--ignore-scripts", "--no-fund", "--no-audit"],
+    check=True,
+)
+
+for relative_path in required_paths:
+    if not (stage_dir / relative_path).exists():
+        raise SystemExit(f"Missing required bundle path: {relative_path}")
+
+for dependency_name in forbidden_dependencies:
+    if dependency_name and (stage_dir / "node_modules" / dependency_name).exists():
+        raise SystemExit(f"Forbidden dependency detected in bundle: {dependency_name}")
+
+with zipfile.ZipFile(asset_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    for item in sorted(stage_dir.rglob("*")):
+        if item.is_file():
+            archive.write(item, item.relative_to(stage_dir))
+
+hash_value = sha256(asset_path.read_bytes()).hexdigest()
+checksum_path.write_text(f"{hash_value} *{core_asset_name}\n", encoding="utf-8")
+asset_size_bytes = asset_path.stat().st_size
+asset_url = release_asset_url_pattern.replace("{tag}", release_tag).replace("{file}", core_asset_name)
+core_manifest = {
+    "manifestVersion": 1,
+    "bundleName": bundle_name,
+    "bundleVersion": bundle_version,
+    "releaseTag": release_tag,
+    "bundleRepo": bundle_repo,
+    "generatedAt": __import__("datetime").datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+    "releaseAssetUrlPattern": release_asset_url_pattern,
+    "artifactNaming": {
+        "core": core_template,
+    },
+    "artifacts": {
+        platform: {
+            "core": {
+                "file": core_asset_name,
+                "sha256": hash_value,
+                "sizeBytes": asset_size_bytes,
+                "url": asset_url,
+            }
+        }
+    },
+}
+core_manifest_path.write_text(json.dumps(core_manifest, indent=2) + "\n", encoding="utf-8")
+print(asset_path)
+print(checksum_path)
+print(core_manifest_path)
 PY
 
-echo "Built core bundles under $DIST_DIR"
-echo "Manifest: $MANIFEST_PATH"
+echo "Built canonical core bundle artifacts under $OUTPUT_DIR"

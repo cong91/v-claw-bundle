@@ -1,11 +1,14 @@
 {
-  "bundleName": "v-claw-bundle",
+  "bundleName": "v-claw-core-bundle",
   "bundleVersion": "1.0.0",
-  "assetName": "v-claw-bundle.zip",
-  "checksumName": "v-claw-bundle.zip.sha256",
-  "manifestName": "v-claw-core-manifest.json",
-  "releaseTag": "v1.0.0",
   "platform": "win-x64",
+  "bundleRepo": "https://github.com/cong91/v-claw-bundle",
+  "releaseTag": "v1.0.0",
+  "releaseAssetUrlPattern": "https://github.com/cong91/v-claw-bundle/releases/download/{tag}/{file}",
+  "artifactNaming": {
+    "core": "v-claw-core-bundle-{version}-{platform}.zip"
+  },
+  "manifestName": "v-claw-core-manifest.json",
   "dependencies": {
     "openclaw": "2026.4.15",
     "@openclaw/zalo": "2026.3.13"
@@ -16,8 +19,8 @@
     "node_modules/@openclaw/zalo/package.json"
   ],
   "stagePackage": {
-    "name": "v-claw-bundle",
+    "name": "v-claw-core-bundle",
     "private": true,
-    "description": "Release-grade V-Claw runtime bundle"
+    "description": "Canonical V-Claw core bundle payload"
   }
 }
