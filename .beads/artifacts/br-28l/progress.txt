@@ -1,0 +1,14 @@
+# Progress Log
+
+Bead: br-28l
+Started: 2026-05-02
+
+## Codebase Patterns
+
+- OpenClaw bundled extensions live under 
+ode_modules/openclaw/dist/extensions/*.
+- V-Claw app checks bundled plugin paths before plugin install.
+- Bundle manifest dependencies determine root packages installed into core bundle.
+
+---
+

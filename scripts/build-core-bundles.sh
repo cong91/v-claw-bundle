@@ -96,19 +96,68 @@ for path in (asset_path, checksum_path, core_manifest_path):
         path.unlink()
 
 stage_dir.mkdir(parents=True, exist_ok=True)
-stage_package_json = {
-    "name": stage_package_name,
-    "version": bundle_version,
-    "private": stage_package_private,
-    "description": stage_package_description,
-    "dependencies": dependencies,
-}
-(stage_dir / "package.json").write_text(json.dumps(stage_package_json, indent=2) + "\n", encoding="utf-8")
 
-subprocess.run(
-    ["npm", "install", "--prefix", str(stage_dir), "--omit=dev", "--ignore-scripts", "--no-fund", "--no-audit"],
-    check=True,
-)
+env = dict(os.environ)
+env.setdefault("SHARP_IGNORE_GLOBAL_LIBVIPS", "1")
+env.setdefault("NPM_CONFIG_LOGLEVEL", "error")
+env.setdefault("NPM_CONFIG_UPDATE_NOTIFIER", "false")
+env.setdefault("NPM_CONFIG_FUND", "false")
+env.setdefault("NPM_CONFIG_AUDIT", "false")
+env.setdefault("NPM_CONFIG_SCRIPT_SHELL", "cmd.exe" if os.name == "nt" else "/bin/sh")
+env.setdefault("NODE_LLAMA_CPP_SKIP_DOWNLOAD", "1")
+for dependency_name, dependency_version in dependencies.items():
+    if not dependency_name or not dependency_version:
+        raise SystemExit("Manifest dependencies must have non-empty names and versions")
+    install_spec = f"{dependency_name}@{dependency_version}"
+    subprocess.run(
+        [
+            "npm",
+            "--prefix",
+            str(stage_dir),
+            "install",
+            "-g",
+            install_spec,
+        ],
+        check=True,
+        env=env,
+    )
+
+stage_package_json_path = stage_dir / "package.json"
+if not stage_package_json_path.exists():
+    stage_package_json = {
+        "name": stage_package_name,
+        "version": bundle_version,
+        "private": stage_package_private,
+        "description": stage_package_description,
+        "dependencies": dependencies,
+    }
+    stage_package_json_path.write_text(json.dumps(stage_package_json, indent=2) + "\n", encoding="utf-8")
+
+openclaw_entry_path = stage_dir / "node_modules" / "openclaw" / "openclaw.mjs"
+if not openclaw_entry_path.exists():
+    raise SystemExit(f"OpenClaw entry was not installed: {openclaw_entry_path}")
+
+doctor_state_dir = stage_dir / ".openclaw"
+if doctor_state_dir.exists():
+    shutil.rmtree(doctor_state_dir)
+doctor_state_dir.mkdir(parents=True, exist_ok=True)
+doctor_env = dict(os.environ)
+doctor_env["OPENCLAW_STATE_DIR"] = str(doctor_state_dir)
+doctor_env["OPENCLAW_CONFIG_PATH"] = str(doctor_state_dir / "openclaw.json")
+try:
+    subprocess.run(
+        ["node", str(openclaw_entry_path), "doctor", "--non-interactive"],
+        check=True,
+        env=doctor_env,
+    )
+finally:
+    doctor_config_path = doctor_state_dir / "openclaw.json"
+    if doctor_config_path.exists():
+        doctor_config_path.unlink()
+    for state_dir_name in ("agents", "credentials", "plugins"):
+        state_dir_path = doctor_state_dir / state_dir_name
+        if state_dir_path.exists():
+            shutil.rmtree(state_dir_path)
 
 for relative_path in required_paths:
     if not (stage_dir / relative_path).exists():

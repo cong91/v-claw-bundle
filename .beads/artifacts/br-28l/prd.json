@@ -1,0 +1,141 @@
+{
+  "beadId": "br-28l",
+  "prdName": "remove-duplicate-openclaw-zalo-root-packaging",
+  "tasks": [
+    {
+      "id": "bundle-1",
+      "title": "In Scope\n\n- Remove `@openclaw/zalo` from the root dependency list in the core bundle manifest.\n- Remove `node_modules/@openclaw/zalo/package.json` from required bundle path validation.\n- Ensure bundle verification still confirms OpenClaw's bundled Zalo extension exists under `node_modules/openclaw/dist/extensions/zalo`.\n- Preserve existing full OpenClaw runtime packaging, browser runtime deps sidecar, and official-installer-equivalent npm install flow.\n- Confirm `v-claw-app` bundled plugin detection and install-skip behavior covers Zalo extension paths.\n- Document app-side fallback expectation: install Zalo only when needed and only if not bundled.\n\n### Out of Scope\n\n- Do not patch OpenClaw runtime/dist files.\n- Do not force `tools.profile: \"minimal\"` or narrow full tool availability.\n- Do not publish a release or overwrite `v1.0.3` without explicit user approval.\n- Do not implement a Zalo UI/config flow beyond preserving existing app-side install fallback behavior.\n- Do not remove OpenClaw's bundled `dist/extensions/zalo` or `dist/extensions/zalouser`.\n\n## Proposed Solution\n\nUse OpenClaw's bundled Zalo extension as the single source of truth for modern V-Claw bundles. The core bundle should install only the OpenClaw runtime package and other truly required root dependencies. Since the OpenClaw runtime already contains `dist/extensions/zalo`, `@openclaw/zalo` should not be installed again into the bundle root.\n\nThe build manifest should stop listing `@openclaw/zalo` as a pinned dependency and should stop requiring `node_modules/@openclaw/zalo/package.json`. Verification should instead check that `node_modules/openclaw/dist/extensions/zalo/package.json` exists in the staged bundle and archive.\n\nThe app side should continue using bundled-plugin detection before invoking plugin install. If Zalo is not present in a future/legacy/custom runtime, app-side install fallback may install it on demand following OpenClaw docs.\n\n## Success Criteria\n\n1. `@openclaw/zalo` is no longer installed into `dist-full/v-claw-core-bundle/node_modules/@openclaw/zalo` by the core bundle build.\n   - Verify: `Test-Path dist-full/v-claw-core-bundle/node_modules/@openclaw/zalo/package.json` returns false after a clean build.\n\n2. OpenClaw bundled Zalo extension remains present in the bundle.\n   - Verify: `Test-Path dist-full/v-claw-core-bundle/node_modules/openclaw/dist/extensions/zalo/package.json` returns true after a clean build.\n\n3. Bundle manifest required paths validate the bundled Zalo extension, not root `@openclaw/zalo`.\n   - Verify: inspect `scripts/bundle-manifest.json` and generated `dist-full/v-claw-core-manifest.json` after build.\n\n4. The canonical zip contains OpenClaw bundled Zalo extension and does not contain root `node_modules/@openclaw/zalo/package.json`.\n   - Verify: `7z l -slt dist-full/v-claw-core-bundle-<version>-win-x64.zip` contains `node_modules\\openclaw\\dist\\extensions\\zalo\\package.json` and does not contain `node_modules\\@openclaw\\zalo\\package.json`.\n\n5. Existing app-side bundled plugin detection still recognizes bundled extension candidates.\n   - Verify: focused app tests covering `resolveBundledPluginPath` / plugin install skip behavior pass, or add focused tests if coverage is missing.\n\n6. No OpenClaw runtime/dist monkey patching is introduced.\n   - Verify: grep bundle scripts for `patch-openclaw`, `verify-openclaw`, or direct edits to `node_modules/openclaw/dist` returns no matches.\n\n## Technical Context\n\n- `v-claw-bundle/scripts/bundle-manifest.json` currently lists dependencies and required paths for the core bundle.\n- `v-claw-bundle/scripts/build-core-bundles-win.ps1` and `v-claw-bundle/scripts/build-core-bundles.sh` install manifest dependencies with official-installer-equivalent npm global flow.\n- Built OpenClaw runtime already includes Zalo under `node_modules/openclaw/dist/extensions/zalo/package.json` and Zalouser under `node_modules/openclaw/dist/extensions/zalouser/package.json`.\n- `v-claw-app/src/main/services/core-bundle/index.js` has bundled plugin path candidates covering `openclaw/extensions/*` and `openclaw/dist/extensions/*`.\n- `v-claw-app/src/main/services/core-bundle/core-bundle-runtime-context.js` skips plugin install if a plugin is already available as bundled.\n- `v-claw-app/src/main/services/channel-config.js` has channel config flow that can trigger optional plugin install for `zalo` when needed.\n- `v-claw-app/resources/plugin-install-manifest.json` currently does not list `zalo` as a managed optional plugin.\n\n## Affected Files\n\n- `scripts/bundle-manifest.json`\n- `scripts/build-core-bundles-win.ps1`\n- `scripts/build-core-bundles.sh`\n- `dist-full/v-claw-core-bundle/package.json` (generated verification target)\n- `dist-full/v-claw-core-bundle/node_modules/openclaw/dist/extensions/zalo/package.json` (generated verification target)\n- `dist-full/v-claw-core-bundle/node_modules/@openclaw/zalo/package.json` (should be absent after rebuild)\n- `src/main/services/core-bundle/index.js` in `v-claw-app` (read/verify only unless tests show gap)\n- `src/main/services/core-bundle/core-bundle-runtime-context.js` in `v-claw-app` (read/verify only unless tests show gap)\n- `src/main/services/channel-config.js` in `v-claw-app` (read/verify only unless tests show gap)\n\n## Tasks\n\n### Remove root Zalo package from bundle manifest",
+      "category": "bundle",
+      "description": "The core bundle manifest no longer declares `@openclaw/zalo` as a root dependency or required root package path.",
+      "steps": [
+        "`Select-String -Path scripts/bundle-manifest.json -Pattern '@openclaw/zalo'` returns no matches.",
+        "`node -e \"const m=require('./scripts/bundle-manifest.json'); if (m.dependencies['@openclaw/zalo']) process.exit(1); if ((m.requiredPaths||[]).some(p=>p.includes('@openclaw/zalo'))) process.exit(1);\"`"
+      ],
+      "passes": false,
+      "metadata": {
+        "depends_on": [],
+        "parallel": false,
+        "conflicts_with": [
+          "scripts/bundle-manifest.json",
+          "scripts/bundle-manifest.json"
+        ],
+        "files": [
+          "scripts/bundle-manifest.json"
+        ]
+      }
+    },
+    {
+      "id": "bundle-2",
+      "title": "Verify bundled Zalo extension as authoritative source",
+      "category": "bundle",
+      "description": "The clean rebuilt bundle contains OpenClaw's bundled Zalo extension and excludes the duplicate root `@openclaw/zalo` package.",
+      "steps": [
+        "`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./scripts/build-core-bundles-win.ps1 -Clean -OutputDir ./dist-full-zalo-clean`",
+        "`Test-Path ./dist-full-zalo-clean/v-claw-core-bundle/node_modules/openclaw/dist/extensions/zalo/package.json` returns true.",
+        "`Test-Path ./dist-full-zalo-clean/v-claw-core-bundle/node_modules/@openclaw/zalo/package.json` returns false."
+      ],
+      "passes": false,
+      "metadata": {
+        "depends_on": [
+          "Remove root Zalo package from bundle manifest",
+          "dist-full",
+          "scripts/build-core-bundles-win.ps1",
+          "scripts/build-core-bundles.sh",
+          "scripts/bundle-manifest.json"
+        ],
+        "parallel": false,
+        "conflicts_with": [
+          "dist-full",
+          "scripts/build-core-bundles-win.ps1",
+          "scripts/build-core-bundles.sh",
+          "scripts/bundle-manifest.json"
+        ],
+        "files": [
+          "scripts/build-core-bundles-win.ps1",
+          "scripts/build-core-bundles.sh",
+          "scripts/bundle-manifest.json"
+        ]
+      }
+    },
+    {
+      "id": "app-1",
+      "title": "Verify app-side bundled plugin skip/fallback behavior",
+      "category": "app",
+      "description": "V-Claw app continues to skip plugin install when Zalo is bundled, while retaining install fallback for runtimes that do not ship Zalo.",
+      "steps": [
+        "`node --test test/core-bundle.test.js` in `../v-claw-app` passes after any needed test additions.",
+        "If no existing test proves Zalo bundled skip behavior, add a focused test that `dist/extensions/zalo` is detected before invoking install."
+      ],
+      "passes": false,
+      "metadata": {
+        "depends_on": [],
+        "parallel": true,
+        "conflicts_with": [],
+        "files": [
+          "../v-claw-app/src/main/services/core-bundle/index.js",
+          "../v-claw-app/src/main/services/core-bundle/core-bundle-runtime-context.js",
+          "../v-claw-app/src/main/services/channel-config.js",
+          "../v-claw-app/test/core-bundle.test.js"
+        ]
+      }
+    },
+    {
+      "id": "release-1",
+      "title": "Verify final archive and manifest",
+      "category": "release",
+      "description": "The generated zip and manifest reflect a single Zalo source: OpenClaw bundled extension only.",
+      "steps": [
+        "`7z l -slt ./dist-full-zalo-clean/v-claw-core-bundle-*.zip` contains `node_modules\\openclaw\\dist\\extensions\\zalo\\package.json`.",
+        "`7z l -slt ./dist-full-zalo-clean/v-claw-core-bundle-*.zip` does not contain `node_modules\\@openclaw\\zalo\\package.json`.",
+        "`git diff --check -- scripts/bundle-manifest.json scripts/build-core-bundles-win.ps1 scripts/build-core-bundles.sh` reports no whitespace errors other than existing LF/CRLF warnings."
+      ],
+      "passes": false,
+      "metadata": {
+        "depends_on": [
+          "Verify bundled Zalo extension as authoritative source",
+          "dist-full-zalo-clean",
+          "dist-full-zalo-clean/v-claw-core-manifest.json",
+          "dist-full-zalo-clean/v-claw-core-bundle-*.zip"
+        ],
+        "parallel": false,
+        "conflicts_with": [
+          "dist-full-zalo-clean",
+          "dist-full-zalo-clean/v-claw-core-manifest.json",
+          "dist-full-zalo-clean/v-claw-core-bundle-*.zip"
+        ],
+        "files": [
+          "dist-full-zalo-clean/v-claw-core-manifest.json",
+          "dist-full-zalo-clean/v-claw-core-bundle-*.zip"
+        ]
+      }
+    }
+  ],
+  "context": {
+    "patterns": [
+      "OpenClaw bundled extensions live under node_modules/openclaw/dist/extensions/*",
+      "v-claw-app detects bundled plugins before invoking plugin install",
+      "Bundle manifest drives root package dependencies and required path validation"
+    ],
+    "keyFiles": [
+      "scripts/bundle-manifest.json",
+      "scripts/build-core-bundles-win.ps1",
+      "scripts/build-core-bundles.sh",
+      "../v-claw-app/src/main/services/core-bundle/index.js",
+      "../v-claw-app/src/main/services/core-bundle/core-bundle-runtime-context.js"
+    ],
+    "nonGoals": [
+      "Patch OpenClaw runtime/dist",
+      "Force minimal tool profile",
+      "Publish release without explicit approval"
+    ]
+  },
+  "beadMetadata": {
+    "depends_on": [],
+    "parallel": false,
+    "conflicts_with": [
+      "bundle manifest/build artifact publishing work"
+    ],
+    "blocks": [],
+    "estimated_hours": 2
+  }
+}

@@ -538,21 +538,94 @@ if (Test-Path -LiteralPath $coreManifestPath) {
 
 New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
-$stagePackageJson = [ordered]@{
-    name         = $stagePackageName
-    version      = $bundleVersion
-    private      = $stagePackagePrivate
-    description  = $stagePackageDescription
-    dependencies = $dependencies
+Write-Info "Installing pinned dependencies into isolated npm global prefix: $stageDir"
+$previousNpmConfigLogLevel = $env:NPM_CONFIG_LOGLEVEL
+$previousNpmConfigUpdateNotifier = $env:NPM_CONFIG_UPDATE_NOTIFIER
+$previousNpmConfigFund = $env:NPM_CONFIG_FUND
+$previousNpmConfigAudit = $env:NPM_CONFIG_AUDIT
+$previousNpmConfigScriptShell = $env:NPM_CONFIG_SCRIPT_SHELL
+$previousNodeLlamaSkipDownload = $env:NODE_LLAMA_CPP_SKIP_DOWNLOAD
+$previousSharpIgnoreGlobalLibvips = $env:SHARP_IGNORE_GLOBAL_LIBVIPS
+foreach ($dependency in $dependencies.GetEnumerator()) {
+    $dependencyName = [string]$dependency.Key
+    $dependencyVersion = [string]$dependency.Value
+    if ([string]::IsNullOrWhiteSpace($dependencyName) -or [string]::IsNullOrWhiteSpace($dependencyVersion)) {
+        Fail 'Manifest dependencies must have non-empty names and versions'
+    }
+    $installSpec = "$dependencyName@$dependencyVersion"
+    Write-Info "Installing $installSpec using official installer-equivalent npm global flow"
+    try {
+        $env:NPM_CONFIG_LOGLEVEL = 'error'
+        $env:NPM_CONFIG_UPDATE_NOTIFIER = 'false'
+        $env:NPM_CONFIG_FUND = 'false'
+        $env:NPM_CONFIG_AUDIT = 'false'
+        $env:NPM_CONFIG_SCRIPT_SHELL = 'cmd.exe'
+        $env:NODE_LLAMA_CPP_SKIP_DOWNLOAD = '1'
+        $env:SHARP_IGNORE_GLOBAL_LIBVIPS = if ($env:SHARP_IGNORE_GLOBAL_LIBVIPS) { $env:SHARP_IGNORE_GLOBAL_LIBVIPS } else { '1' }
+        & npm --prefix $stageDir install -g $installSpec
+        if ($LASTEXITCODE -ne 0) {
+            Fail "npm global install failed while building v-claw-bundle: $installSpec"
+        }
+    }
+    finally {
+        $env:NPM_CONFIG_LOGLEVEL = $previousNpmConfigLogLevel
+        $env:NPM_CONFIG_UPDATE_NOTIFIER = $previousNpmConfigUpdateNotifier
+        $env:NPM_CONFIG_FUND = $previousNpmConfigFund
+        $env:NPM_CONFIG_AUDIT = $previousNpmConfigAudit
+        $env:NPM_CONFIG_SCRIPT_SHELL = $previousNpmConfigScriptShell
+        $env:NODE_LLAMA_CPP_SKIP_DOWNLOAD = $previousNodeLlamaSkipDownload
+        $env:SHARP_IGNORE_GLOBAL_LIBVIPS = $previousSharpIgnoreGlobalLibvips
+    }
 }
 
 $stagePackageJsonPath = Join-Path $stageDir 'package.json'
-$stagePackageJson | ConvertTo-Json -Depth 10 | Out-File -FilePath $stagePackageJsonPath -Encoding utf8
+if (-not (Test-Path -LiteralPath $stagePackageJsonPath)) {
+    $stagePackageJson = [ordered]@{
+        name         = $stagePackageName
+        version      = $bundleVersion
+        private      = $stagePackagePrivate
+        description  = $stagePackageDescription
+        dependencies = $dependencies
+    }
+    $stagePackageJson | ConvertTo-Json -Depth 10 | Out-File -FilePath $stagePackageJsonPath -Encoding utf8
+}
 
-Write-Info "Installing pinned dependencies into: $stageDir"
-& npm install --prefix $stageDir --omit=dev --ignore-scripts --no-fund --no-audit --no-progress
-if ($LASTEXITCODE -ne 0) {
-    Fail 'npm install failed while building v-claw-bundle'
+$openclawEntryPath = Join-Path $stageDir 'node_modules/openclaw/openclaw.mjs'
+if (-not (Test-Path -LiteralPath $openclawEntryPath)) {
+    Fail "OpenClaw entry was not installed: $openclawEntryPath"
+}
+
+$doctorStateDir = Join-Path $stageDir '.openclaw'
+if (Test-Path -LiteralPath $doctorStateDir) {
+    Remove-DirectoryWithRetry -Path $doctorStateDir -MaxAttempts 5 -DelayMilliseconds 500
+}
+New-Item -ItemType Directory -Path $doctorStateDir -Force | Out-Null
+$previousOpenclawStateDir = $env:OPENCLAW_STATE_DIR
+$previousOpenclawConfigPath = $env:OPENCLAW_CONFIG_PATH
+try {
+    $env:OPENCLAW_STATE_DIR = $doctorStateDir
+    $env:OPENCLAW_CONFIG_PATH = Join-Path $doctorStateDir 'openclaw.json'
+    Write-Info 'Running OpenClaw doctor to stage bundled runtime dependencies'
+    & node $openclawEntryPath doctor --non-interactive
+    if ($LASTEXITCODE -ne 0) {
+        Fail 'OpenClaw doctor failed while staging bundled runtime dependencies'
+    }
+}
+finally {
+    $env:OPENCLAW_STATE_DIR = $previousOpenclawStateDir
+    $env:OPENCLAW_CONFIG_PATH = $previousOpenclawConfigPath
+}
+
+$doctorConfigPath = Join-Path $doctorStateDir 'openclaw.json'
+if (Test-Path -LiteralPath $doctorConfigPath) {
+    Remove-FileWithRetry -Path $doctorConfigPath -MaxAttempts 5 -DelayMilliseconds 500
+}
+$stateDirsToRemove = @('agents', 'credentials', 'plugins')
+foreach ($stateDirName in $stateDirsToRemove) {
+    $stateDirPath = Join-Path $doctorStateDir $stateDirName
+    if (Test-Path -LiteralPath $stateDirPath) {
+        Remove-DirectoryWithRetry -Path $stateDirPath -MaxAttempts 5 -DelayMilliseconds 500
+    }
 }
 
 Assert-ForbiddenDependenciesAbsent -Root $stageDir -PackageNames $forbiddenDependencies

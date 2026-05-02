@@ -1,6 +1,6 @@
 {
   "name": "v-claw-bundle",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "private": true,
   "description": "Canonical producer repo for V-Claw core bundle artifacts and release manifests",
   "license": "MIT",
