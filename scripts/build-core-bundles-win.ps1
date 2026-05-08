@@ -590,44 +590,6 @@ if (-not (Test-Path -LiteralPath $stagePackageJsonPath)) {
     $stagePackageJson | ConvertTo-Json -Depth 10 | Out-File -FilePath $stagePackageJsonPath -Encoding utf8
 }
 
-$openclawEntryPath = Join-Path $stageDir 'node_modules/openclaw/openclaw.mjs'
-if (-not (Test-Path -LiteralPath $openclawEntryPath)) {
-    Fail "OpenClaw entry was not installed: $openclawEntryPath"
-}
-
-$doctorStateDir = Join-Path $stageDir '.openclaw'
-if (Test-Path -LiteralPath $doctorStateDir) {
-    Remove-DirectoryWithRetry -Path $doctorStateDir -MaxAttempts 5 -DelayMilliseconds 500
-}
-New-Item -ItemType Directory -Path $doctorStateDir -Force | Out-Null
-$previousOpenclawStateDir = $env:OPENCLAW_STATE_DIR
-$previousOpenclawConfigPath = $env:OPENCLAW_CONFIG_PATH
-try {
-    $env:OPENCLAW_STATE_DIR = $doctorStateDir
-    $env:OPENCLAW_CONFIG_PATH = Join-Path $doctorStateDir 'openclaw.json'
-    Write-Info 'Running OpenClaw doctor to stage bundled runtime dependencies'
-    & node $openclawEntryPath doctor --non-interactive
-    if ($LASTEXITCODE -ne 0) {
-        Fail 'OpenClaw doctor failed while staging bundled runtime dependencies'
-    }
-}
-finally {
-    $env:OPENCLAW_STATE_DIR = $previousOpenclawStateDir
-    $env:OPENCLAW_CONFIG_PATH = $previousOpenclawConfigPath
-}
-
-$doctorConfigPath = Join-Path $doctorStateDir 'openclaw.json'
-if (Test-Path -LiteralPath $doctorConfigPath) {
-    Remove-FileWithRetry -Path $doctorConfigPath -MaxAttempts 5 -DelayMilliseconds 500
-}
-$stateDirsToRemove = @('agents', 'credentials', 'plugins')
-foreach ($stateDirName in $stateDirsToRemove) {
-    $stateDirPath = Join-Path $doctorStateDir $stateDirName
-    if (Test-Path -LiteralPath $stateDirPath) {
-        Remove-DirectoryWithRetry -Path $stateDirPath -MaxAttempts 5 -DelayMilliseconds 500
-    }
-}
-
 Assert-ForbiddenDependenciesAbsent -Root $stageDir -PackageNames $forbiddenDependencies
 Assert-PathExists -Root $stageDir -RelativePaths $requiredPaths
 
