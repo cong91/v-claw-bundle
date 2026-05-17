@@ -1,16 +1,16 @@
 {
   "bundleName": "v-claw-core-bundle",
-  "bundleVersion": "1.0.5",
+  "bundleVersion": "1.0.6",
   "platform": "win-x64",
   "bundleRepo": "https://github.com/cong91/v-claw-bundle",
-  "releaseTag": "v1.0.5",
+  "releaseTag": "v1.0.6",
   "releaseAssetUrlPattern": "https://github.com/cong91/v-claw-bundle/releases/download/{tag}/{file}",
   "artifactNaming": {
     "core": "v-claw-core-bundle-{version}-{platform}.zip"
   },
   "manifestName": "v-claw-core-manifest.json",
   "dependencies": {
-    "openclaw": "2026.5.6"
+    "openclaw": "2026.5.12"
   },
   "requiredPaths": ["package.json", "node_modules/openclaw/openclaw.mjs"],
   "stagePackage": {
